@@ -6,5 +6,6 @@ __pycache__/
 *.webp
 *.png
 *.jpeg
+*.exe
 last_seen.json
 monitor.log

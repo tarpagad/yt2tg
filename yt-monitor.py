@@ -14,7 +14,7 @@ if not YOUTUBE_CHANNEL_ID:
     print("Error: YOUTUBE_CHANNEL_ID not set in .env file")
     exit(1)
 RSS_FEED_URL = f"https://www.youtube.com/feeds/videos.xml?channel_id={YOUTUBE_CHANNEL_ID}"
-UPLOADER_SCRIPT = "youtube_telegram_uploader.py"  # Your existing script
+UPLOADER_SCRIPT = "yt2tg.py"  # Your existing script
 LAST_SEEN_FILE = "last_seen.json"  # File to store the last processed timestamp
 
 def load_last_seen():

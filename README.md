@@ -1,6 +1,6 @@
 # YouTube Telegram Uploader
 
-A Python script to download audio from a YouTube video, convert it to MP3, and upload it to a Telegram channel with metadata and an optional thumbnail.
+A Python script to download audio from YouTube videos, convert it to MP3, and upload it to a Telegram channel with metadata and an optional thumbnail. Includes a monitoring script to automatically detect and process new videos from a specified YouTube channel.
 
 ## Features
 
@@ -9,7 +9,7 @@ A Python script to download audio from a YouTube video, convert it to MP3, and u
 - Cleans video titles for safe filenames and Telegram metadata.
 - Uploads audio to a specified Telegram channel with title, performer, duration, and source URL.
 - Supports optional thumbnail upload.
-- Manages temporary files with robust cleanup.
+- Monitors a YouTube channel for new videos via RSS feed and triggers uploads automatically.
 - Configurable via environment variables for security and flexibility.
 
 ## Prerequisites
@@ -22,6 +22,7 @@ A Python script to download audio from a YouTube video, convert it to MP3, and u
 
 - **A Telegram bot token**: Obtain one from [BotFather](https://t.me/BotFather) on Telegram.
 - **A Telegram channel**: Ensure your bot has permission to post in the channel.
+- **A YouTube channel ID**: Find it by viewing the channel’s page source and searching for `"channel_id"` (e.g., `UC_x5XG1OV2P6uZZ5FSM9Ttw`) or use an online tool like [TunePocket YouTube Channel ID Finder](https://www.tunepocket.com/youtube-channel-id-finder/).
 - **FFmpeg**: A command-line tool required for audio conversion.
 
 ## Installation
@@ -41,13 +42,14 @@ Follow these steps to set up the project:
    ```
 
 3. **Install Python Packages**:
-   The script requires only three external Python packages:
+   The project requires four external Python packages:
    ```bash
-   pip install yt-dlp python-telegram-bot python-dotenv
+   pip install yt-dlp python-telegram-bot python-dotenv feedparser
    ```
    - `yt-dlp`: Downloads YouTube videos.
    - `python-telegram-bot`: Interacts with Telegram.
    - `python-dotenv`: Loads configuration from a `.env` file.
+   - `feedparser`: Parses YouTube RSS feeds for monitoring.
    - **Note**: Other required modules (e.g., `os`, `sys`, `datetime`) are part of Python’s standard library and don’t need installation.
 
 4. **Install FFmpeg**:
@@ -73,10 +75,12 @@ Follow these steps to set up the project:
    ```env
    TELEGRAM_BOT_TOKEN=your_bot_token_here
    TELEGRAM_CHANNEL_ID=@your_channel_id_here
+   YOUTUBE_CHANNEL_ID=your_youtube_channel_id_here
    VERBOSE=False
    ```
    - Replace `your_bot_token_here` with your Telegram bot token.
    - Replace `@your_channel_id_here` with your Telegram channel ID (e.g., `@MyChannel`).
+   - Replace `your_youtube_channel_id_here` with the YouTube channel ID (e.g., `UC_x5XG1OV2P6uZZ5FSM9Ttw`).
    - Set `VERBOSE=True` for detailed debug output (optional, default is `False`).
 
 6. **Verify Setup**:
@@ -88,29 +92,44 @@ Follow these steps to set up the project:
 
 ## Usage
 
-Run the script with a YouTube video URL as an argument:
-
+### Manual Upload
+Run the uploader script with a YouTube video URL as an argument:
 ```bash
 python yt2tg.py https://www.youtube.com/watch?v=C1sAsoJVN1U
 ```
 
-### What the Script Does
-1. Extracts the video ID from the URL (e.g., `C1sAsoJVN1U`).
-2. Downloads the best available audio and converts it to MP3.
-3. Retrieves metadata (title, uploader, duration) and the video thumbnail.
-4. Uploads the MP3 to your Telegram channel with a caption including the title and source URL.
-5. Cleans up temporary files.
+### Automated Monitoring
+Run the monitoring script to check for new videos on the specified YouTube channel:
+```bash
+python yt-monitor.py
+```
+- The script checks the channel’s RSS feed, detects new videos, and runs the uploader script for each one.
+- It stores the last processed video’s timestamp in `last_seen.json` to avoid duplicates.
 
-### Supported URL Formats
-- Standard: `https://www.youtube.com/watch?v=video_id`
-- Short: `https://youtu.be/video_id`
-- URLs with extra parameters (e.g., `https://www.youtube.com/watch?v=video_id&feature=share`)
+### Scheduling Automation
+To run the monitoring script automatically (e.g., every 15 minutes):
+- **Linux/macOS (Cron)**:
+  1. Open crontab: `crontab -e`.
+  2. Add:
+     ```cron
+     */15 * * * * /path/to/venv/bin/python /path/to/yt2tg/yt-monitor.py >> /path/to/log.txt 2>&1
+     ```
+     - Replace `/path/to/venv/bin/python` and `/path/to/yt2tg/yt-monitor.py` with actual paths.
+     - Logs output to `log.txt` for debugging.
+- **Windows (Task Scheduler)**:
+  1. Open Task Scheduler from the Start menu.
+  2. Create a task with a trigger (e.g., every 15 minutes).
+  3. Set action: Start a program → `C:\path\to\python.exe`.
+  4. Add arguments: `C:\path\to\yt-monitor.py`.
+  5. Set “Start in”: The project directory.
+  6. Enable “Run whether user is logged on or not.”
 
 ## Configuration
 
-Customize the script using the `.env` file:
+Customize the project using the `.env` file:
 - `TELEGRAM_BOT_TOKEN`: Your Telegram bot token (required).
 - `TELEGRAM_CHANNEL_ID`: The Telegram channel ID (default: `@generalissadiawara`).
+- `YOUTUBE_CHANNEL_ID`: The YouTube channel ID to monitor (e.g., `UC_x5XG1OV2P6uZZ5FSM9Ttw`).
 - `VERBOSE`: Set to `True` for detailed logs (default: `False`).
 - `DEFAULT_MAX_ABR`: Audio bitrate in kbps (default: `192`).
 
@@ -118,47 +137,52 @@ Customize the script using the `.env` file:
 
 ```plaintext
 yt2tg/
-├── yt2tg.py  # Main script
+├── youtube_telegram_uploader.py  # Main uploader script
+├── yt-monitor.py    # Monitoring script for new videos
 ├── .env                         # Environment variables (not tracked in git)
+├── last_seen.json               # Stores last processed video timestamp
 ├── README.md                    # This file
-├── LICENSE.md                   #
+├── LICENSE                      # MIT License
 └── .gitignore                   # Git ignore file
 ```
 
 ## Security Notes
 
-- **Protect Your `.env` File**: Add `.env` to `.gitignore` to prevent exposing your Telegram bot token. Example `.gitignore`:
+- **Protect Your `.env` File**: Add `.env` to `.gitignore` to prevent exposing sensitive data. Example `.gitignore`:
   ```gitignore
   .env
   venv/
   __pycache__/
+  last_seen.json
   *.mp3
   *.jpg
   *.webp
   *.png
   *.jpeg
   ```
-- **Bot Permissions**: Ensure your bot is added to the Telegram channel with posting permissions.
+- **Bot Permissions**: Ensure your bot is an admin in the Telegram channel with posting permissions.
 - **Rate Limits**: Avoid excessive uploads to prevent Telegram API rate limit issues.
 
 ## Troubleshooting for Beginners
 
 - **“Command not found: python3”**:
-  - Ensure Python 3 is installed. Run `python3 --version` or `python --version`. Install Python from [python.org](https://www.python.org/downloads/) if needed.
+  - Ensure Python 3 is installed: `python3 --version`. Install from [python.org](https://www.python.org/downloads/) if needed.
 - **“Module not found” errors**:
-  - Ensure you’re in the virtual environment (`source venv/bin/activate` or `venv\Scripts\activate` on Windows).
-  - Reinstall packages: `pip install yt-dlp python-telegram-bot python-dotenv`.
+  - Activate the virtual environment: `source venv/bin/activate` (or `venv\Scripts\activate` on Windows).
+  - Reinstall packages: `pip install yt-dlp python-telegram-bot python-dotenv feedparser`.
 - **“FFmpeg not found”**:
-  - Verify FFmpeg installation with `ffmpeg -version`.
+  - Verify FFmpeg: `ffmpeg -version`.
   - Ensure FFmpeg is in your system PATH (especially on Windows).
-- **“Could not extract video ID from URL”**:
-  - Check that the URL is a valid YouTube video URL.
+- **“YOUTUBE_CHANNEL_ID not set”**:
+  - Check that `YOUTUBE_CHANNEL_ID` is in the `.env` file and matches the channel’s ID.
+- **“Error parsing feed”**:
+  - Verify the `YOUTUBE_CHANNEL_ID` is correct. Test the RSS URL (`https://www.youtube.com/feeds/videos.xml?channel_id=ID`) in a browser.
 - **“Telegram API error”**:
-  - Verify your bot token and channel ID in the `.env` file.
-  - Ensure the bot is an admin in the channel with posting permissions.
+  - Confirm bot token and channel ID in `.env`.
+  - Ensure the bot has posting permissions.
 - **Still stuck?**:
-  - Set `VERBOSE=True` in `.env` and rerun the script to see detailed logs.
-  - Search for the error message online or open an issue on GitHub.
+  - Set `VERBOSE=True` in `.env` and rerun to see detailed logs.
+  - Search the error online or open a GitHub issue.
 
 ## Contributing
 
@@ -177,4 +201,5 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 - Powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp) for YouTube audio extraction.
 - Uses [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) for Telegram integration.
-- Leverages [python-dotenv](https://github.com/theskumar/python-dotenv) for configuration management.
+- Leverages [python-dotenv](https://github.com/theskumar/python-dotenv) for configuration.
+- Uses [feedparser](https://github.com/kurtmckee/feedparser) for RSS feed parsing.

@@ -7,3 +7,4 @@ __pycache__/
 *.png
 *.jpeg
 last_seen.json
+monitor.log

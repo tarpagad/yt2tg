@@ -11,6 +11,18 @@ import shutil
 import time
 import urllib.parse
 from dotenv import load_dotenv
+import logging
+
+# Configure logging with timestamps
+logging.basicConfig(
+    level=logging.INFO,  # Set to DEBUG for more details, INFO for standard
+    format='%(asctime)s - %(levelname)s - %(message)s',  # Includes timestamp, level, message
+    handlers=[
+        logging.FileHandler('monitor.log'),  # Write to monitor.log
+        logging.StreamHandler()  # Also print to console (optional; remove if unwanted)
+    ]
+)
+logger = logging.getLogger(__name__)  # Use this logger throughout
 
 # --- CONFIGURATION ---
 load_dotenv()  # Load environment variables from .env file
@@ -53,7 +65,7 @@ async def main():
         video_id = parsed_url.path.lstrip('/')
     
     if not video_id:
-        print("Error: Could not extract video ID from URL")
+        logging.error("Error: Could not extract video ID from URL")
         sys.exit(1)
     
     video_url = video_id  # Use video ID directly for yt_dlp
@@ -92,7 +104,7 @@ async def main():
             try:
                 info_dict = ydl.extract_info(video_url, download=False)
             except yt_dlp.utils.DownloadError as e:
-                print(f"Error extracting video info: {e}")
+                logger.error(f"Error extracting video info: {e}")
                 sys.exit(1)
 
             title = info_dict.get('title', 'Unknown Title')
@@ -120,7 +132,7 @@ async def main():
             try:
                 ydl.download([video_url])
             except yt_dlp.utils.DownloadError as e:
-                print(f"Download failed: {e}")
+                logger.error(f"Download failed: {e}")
                 sys.exit(1)
 
             # Find the downloaded audio file
@@ -143,10 +155,10 @@ async def main():
                         thumbnail_filename = potential_thumbnail
                         break
 
-        print(f"Audio downloaded successfully: {audio_filename}")
+        logger.info(f"Audio downloaded successfully: {audio_filename}")
 
         # --- Upload to Telegram ---
-        print("Uploading to Telegram...")
+        logger.info("Uploading to Telegram...")
         bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
 
         # Prepare caption with original URL
@@ -184,19 +196,19 @@ async def main():
                         read_timeout=120.0,
                         connect_timeout=120.0
                     )
-            print("Audio uploaded successfully to Telegram!")
+            logger.info("Audio uploaded successfully to Telegram!")
         except telegram.error.NetworkError as e:
-            print(f"Network error during Telegram upload: {e}")
+            logger.error(f"Network error during Telegram upload: {e}")
             sys.exit(1)
         except telegram.error.BadRequest as e:
-            print(f"Bad request error during Telegram upload: {e}")
+            logger.error(f"Bad request error during Telegram upload: {e}")
             sys.exit(1)
         except telegram.error.TelegramError as e:
-            print(f"Telegram API error: {e}")
+            logger.error(f"Telegram API error: {e}")
             sys.exit(1)
 
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error(f"Error: {e}")
         sys.exit(1)
     finally:
         # Cleanup temporary directory
@@ -205,14 +217,14 @@ async def main():
             for attempt in range(retries):
                 try:
                     shutil.rmtree(temp_dir)
-                    print(f"Cleaned up temporary directory: {temp_dir}")
+                    logger.info(f"Cleaned up temporary directory: {temp_dir}")
                     break
                 except PermissionError as e:
                     if attempt < retries - 1:
-                        print(f"Cleanup attempt {attempt + 1} failed. Retrying in 1 second...")
+                        logger.error(f"Cleanup attempt {attempt + 1} failed. Retrying in 1 second...")
                         time.sleep(1)
                     else:
-                        print(f"Failed to clean up temporary directory after {retries} attempts: {e}")
+                        logger.error(f"Failed to clean up temporary directory after {retries} attempts: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())

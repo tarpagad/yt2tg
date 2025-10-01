@@ -1,9 +1,22 @@
+import sys
 import feedparser
 import json
 import os
 import subprocess
 from datetime import datetime, timezone
 from dotenv import load_dotenv
+import logging
+
+# Configure logging with timestamps
+logging.basicConfig(
+    level=logging.INFO,  # Set to DEBUG for more details, INFO for standard
+    format='%(asctime)s - %(levelname)s - %(message)s',  # Includes timestamp, level, message
+    handlers=[
+        logging.FileHandler('monitor.log'),  # Write to monitor.log
+        logging.StreamHandler()  # Also print to console (optional; remove if unwanted)
+    ]
+)
+logger = logging.getLogger(__name__)  # Use this logger throughout
 
 # Load environment variables
 load_dotenv()
@@ -11,8 +24,8 @@ load_dotenv()
 # Configuration
 YOUTUBE_CHANNEL_ID = os.getenv("YOUTUBE_CHANNEL_ID")
 if not YOUTUBE_CHANNEL_ID:
-    print("Error: YOUTUBE_CHANNEL_ID not set in .env file")
-    exit(1)
+    logger.error("Error: YOUTUBE_CHANNEL_ID not set in .env file")
+    sys.exit(1)
 RSS_FEED_URL = f"https://www.youtube.com/feeds/videos.xml?channel_id={YOUTUBE_CHANNEL_ID}"
 UPLOADER_SCRIPT = "yt2tg.py"  # Your existing script
 LAST_SEEN_FILE = "last_seen.json"  # File to store the last processed timestamp
@@ -31,8 +44,8 @@ def save_last_seen(timestamp):
 # Fetch and parse RSS feed
 feed = feedparser.parse(RSS_FEED_URL)
 if feed.bozo:  # Error check
-    print(f"Error parsing feed: {feed.bozo_exception}")
-    exit(1)
+    logger.error(f"Error parsing feed: {feed.bozo_exception}")
+    sys.exit(1)
 
 last_seen = load_last_seen()
 new_videos = []
@@ -44,8 +57,8 @@ for entry in feed.entries:
         new_videos.append((published, entry.link))  # (timestamp, video URL)
 
 if not new_videos:
-    print("No new videos found.")
-    exit(0)
+    logger.info("No new videos found.")
+    sys.exit(0)
 
 # Sort by publish date (oldest first) to process in order
 new_videos.sort(key=lambda x: x[0])
@@ -53,12 +66,12 @@ new_videos.sort(key=lambda x: x[0])
 # Process each new video
 newest_timestamp = last_seen
 for published, video_url in new_videos:
-    print(f"New video found: {video_url}")
+    logger.info(f"New video found: {video_url}")
     try:
         subprocess.run(["python", UPLOADER_SCRIPT, video_url], check=True)
-        print(f"Uploaded: {video_url}")
+        logger.info(f"Uploaded: {video_url}")
     except subprocess.CalledProcessError as e:
-        print(f"Error uploading {video_url}: {e}")
+        logger.error(f"Error uploading {video_url}: {e}")
     # Update newest timestamp
     if newest_timestamp is None or published > newest_timestamp:
         newest_timestamp = published
@@ -67,4 +80,4 @@ for published, video_url in new_videos:
 if newest_timestamp:
     save_last_seen(newest_timestamp)
 
-print("Monitoring complete.")
+logger.info("Monitoring complete.")

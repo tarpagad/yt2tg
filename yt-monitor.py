@@ -27,7 +27,7 @@ if not YOUTUBE_CHANNEL_ID:
     logger.error("Error: YOUTUBE_CHANNEL_ID not set in .env file")
     sys.exit(1)
 RSS_FEED_URL = f"https://www.youtube.com/feeds/videos.xml?channel_id={YOUTUBE_CHANNEL_ID}"
-UPLOADER_SCRIPT = "yt2tg.py"  # Your existing script
+UPLOADER_SCRIPT = "yt2tglocal.py"  # Updated to use local yt-dlp executable
 LAST_SEEN_FILE = "last_seen.json"  # File to store the last processed timestamp
 
 def load_last_seen():

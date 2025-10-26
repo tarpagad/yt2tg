@@ -9,3 +9,5 @@ __pycache__/
 *.exe
 last_seen.json
 monitor.log
+build
+dist

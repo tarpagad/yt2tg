@@ -1,5 +1,7 @@
 # YouTube Telegram Uploader
 
+Note : Due to some changes on YouTube side, downloading with Python library no longer work. Only yt-dlp installed locally is currently working, so the script has been update do use a locally installed executable to perform the download
+
 A Python script to download audio from YouTube videos, convert it to MP3, and upload it to a Telegram channel with metadata and an optional thumbnail. Includes a monitoring script to automatically detect and process new videos from a specified YouTube channel.
 
 ## Features

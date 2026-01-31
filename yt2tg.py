@@ -1,230 +1,330 @@
-#coding: utf-8
-import yt_dlp
+#!/usr/bin/env python3
+"""
+YouTube to Telegram Feed Monitor
+Monitors a YouTube RSS feed, prompts user to download new videos in a terminal,
+and uploads them to Telegram.
+"""
+
 import os
 import sys
 import asyncio
-import telegram
-from datetime import datetime
-import re
+import subprocess
 import tempfile
 import shutil
 import time
-import urllib.parse
-from dotenv import load_dotenv
+import json
 import logging
+import platform
+from datetime import datetime
+from dotenv import load_dotenv
 
-# Configure logging with timestamps
+import feedparser
+import telegram
+from telegram.constants import ParseMode
+
+# --- Configuration ---
+load_dotenv()
+
+# Configure logging
 logging.basicConfig(
-    level=logging.INFO,  # Set to DEBUG for more details, INFO for standard
-    format='%(asctime)s - %(levelname)s - %(message)s',  # Includes timestamp, level, message
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('monitor.log'),  # Write to monitor.log
-        logging.StreamHandler()  # Also print to console (optional; remove if unwanted)
+        logging.FileHandler('yt2tg_monitor.log'),
+        logging.StreamHandler()
     ]
 )
-logger = logging.getLogger(__name__)  # Use this logger throughout
+logger = logging.getLogger(__name__)
 
-# --- CONFIGURATION ---
-load_dotenv()  # Load environment variables from .env file
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")  # Load token from environment variable
-TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "@generalissadiawara")  # Default channel ID
-DEFAULT_MAX_ABR = 192  # kbps
+# Constants
+LAST_SEEN_FILE = "last_seen.json"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
+YOUTUBE_CHANNEL_ID = os.getenv("YOUTUBE_CHANNEL_ID")
 
-def clean_title(title):
-    """
-    Clean title for filename and Telegram metadata: remove invalid characters and trim to Telegram limits.
-    """
-    if not title:
-        return "Unknown Title"
-    # Remove common invalid filename characters
-    title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', str(title))
-    # Trim whitespace
-    title = title.strip()
-    # Limit to Telegram's title/performer length (64 chars)
-    title = title[:64]
-    return title
+class FeedMonitor:
+    def __init__(self):
+        self.verify_config()
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
 
-async def main():
-    """
-    Downloads audio from a YouTube video, extracts it as MP3, adds metadata, and uploads it to Telegram.
-    """
-    if len(sys.argv) < 2:
-        print("Usage: python youtube_telegram_uploader.py <youtube_video_url>")
-        sys.exit(1)
+    def verify_config(self):
+        if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID, YOUTUBE_CHANNEL_ID]):
+            logger.error("Missing configuration. Please check .env file.")
+            logger.error("Required: TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID, YOUTUBE_CHANNEL_ID")
+            sys.exit(1)
 
-    # Extract video ID from URL
-    parsed_url = urllib.parse.urlparse(sys.argv[1])
-    query_params = urllib.parse.parse_qs(parsed_url.query)
-    video_id = None
-
-    # Handle standard YouTube URLs (e.g., https://www.youtube.com/watch?v=dQw4w9WgXcQ)
-    if 'v' in query_params:
-        video_id = query_params['v'][0]
-    # Handle short YouTube URLs (e.g., https://youtu.be/dQw4w9WgXcQ)
-    elif parsed_url.netloc == 'youtu.be':
-        video_id = parsed_url.path.lstrip('/')
-    
-    if not video_id:
-        logging.error("Error: Could not extract video ID from URL")
-        sys.exit(1)
-    
-    video_url = video_id  # Use video ID directly for yt_dlp
-
-    temp_dir = None
-    audio_filename = None
-    thumbnail_filename = None
-
-    try:
-        # Validate Telegram bot token
-        if not TELEGRAM_BOT_TOKEN:
-            raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set")
-
-        # Create a temporary directory for downloads
-        temp_dir = tempfile.mkdtemp()
-
-        # Enhanced ydl options
-        ydl_opts = {
-            'format': 'bestaudio[ext=m4a]/bestaudio',  # Prefer m4a format if available
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',  # Extract audio using FFmpeg
-                'preferredcodec': 'mp3',      # Convert to MP3 format
-                'preferredquality': str(DEFAULT_MAX_ABR),  # Set bitrate
-            }],
-            'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),  # Use absolute path
-            'writethumbnail': True,         # Write thumbnail image
-            'writeinfojson': True,          # Write metadata JSON
-            'quiet': False,                 # Disable quiet mode for debugging
-            'no_warnings': False,           # Show warnings
-            'extract_flat': False,          # Full extract for single video
-            'verbose': os.getenv("VERBOSE", "False").lower() == "true",  # Configurable verbosity
-        }
-
-        # Extract info first to get title, uploader, duration, etc.
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    def load_last_seen(self):
+        """Load the timestamp of the last processed video."""
+        if os.path.exists(LAST_SEEN_FILE):
             try:
-                info_dict = ydl.extract_info(video_url, download=False)
-            except yt_dlp.utils.DownloadError as e:
-                logger.error(f"Error extracting video info: {e}")
-                sys.exit(1)
+                with open(LAST_SEEN_FILE, "r") as f:
+                    data = json.load(f)
+                    # Handle ISO format with timezone
+                    return datetime.fromisoformat(data["last_published"])
+            except Exception as e:
+                logger.error(f"Error loading last_seen.json: {e}")
+                return None
+        return None
 
-            title = info_dict.get('title', 'Unknown Title')
-            uploader = info_dict.get('uploader', 'Unknown')
-            duration = info_dict.get('duration', 0)
-            upload_date = info_dict.get('upload_date')
-            thumbnail = info_dict.get('thumbnail')  # Get thumbnail URL from info_dict
-
-            # Parse upload date
-            date = None
-            if upload_date:
-                try:
-                    date = datetime.strptime(upload_date, '%Y%m%d')
-                except ValueError:
-                    pass
-
-            # Clean title
-            clean_title_ = clean_title(title)
-
-            # Format filename
-            ext = '.mp3'
-            formatted_filename = os.path.join(temp_dir, f"{clean_title_}{ext}")
-
-            # Download the video/audio
-            try:
-                ydl.download([video_url])
-            except yt_dlp.utils.DownloadError as e:
-                logger.error(f"Download failed: {e}")
-                sys.exit(1)
-
-            # Find the downloaded audio file
-            audio_files = [f for f in os.listdir(temp_dir) if f.endswith('.mp3')]
-            if audio_files:
-                audio_filename = os.path.join(temp_dir, audio_files[0])  # Use first MP3 file
-                # Rename to formatted if different
-                if audio_filename != formatted_filename:
-                    os.rename(audio_filename, formatted_filename)
-                    audio_filename = formatted_filename
-            else:
-                raise Exception("No audio file downloaded")
-
-            # Find thumbnail using info_dict or file search
-            if thumbnail:
-                thumbnail_extensions = ['.jpg', '.webp', '.png', '.jpeg']
-                for ext in thumbnail_extensions:
-                    potential_thumbnail = os.path.join(temp_dir, f"{clean_title_}{ext}")
-                    if os.path.exists(potential_thumbnail):
-                        thumbnail_filename = potential_thumbnail
-                        break
-
-        logger.info(f"Audio downloaded successfully: {audio_filename}")
-
-        # --- Upload to Telegram ---
-        logger.info("Uploading to Telegram...")
-        bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
-
-        # Prepare caption with original URL
-        caption = f"<strong>{title}</strong>\n\n<b>Vidéo source:</b> {sys.argv[1]}"
-        parse_mode = telegram.constants.ParseMode.HTML
-
-        # Upload to Telegram with error handling
+    def save_last_seen(self, timestamp):
+        """Save the timestamp of the last processed video."""
         try:
-            with open(audio_filename, "rb") as audio_file:
-                if thumbnail_filename and os.path.exists(thumbnail_filename):
-                    with open(thumbnail_filename, "rb") as thumb_file:
-                        await bot.send_audio(
-                            chat_id=TELEGRAM_CHANNEL_ID,
-                            audio=audio_file,
-                            caption=caption,
-                            parse_mode=parse_mode,
-                            title=clean_title_[:64],  # Telegram limit
-                            performer=uploader[:64],
-                            duration=duration,
-                            write_timeout=120.0,
-                            read_timeout=120.0,
-                            connect_timeout=120.0,
-                            thumbnail=thumb_file
-                        )
-                else:
-                    await bot.send_audio(
-                        chat_id=TELEGRAM_CHANNEL_ID,
-                        audio=audio_file,
-                        caption=caption,
-                        parse_mode=parse_mode,
-                        title=clean_title_[:64],
-                        performer=uploader[:64],
-                        duration=duration,
-                        write_timeout=120.0,
-                        read_timeout=120.0,
-                        connect_timeout=120.0
-                    )
-            logger.info("Audio uploaded successfully to Telegram!")
-        except telegram.error.NetworkError as e:
-            logger.error(f"Network error during Telegram upload: {e}")
-            sys.exit(1)
-        except telegram.error.BadRequest as e:
-            logger.error(f"Bad request error during Telegram upload: {e}")
-            sys.exit(1)
-        except telegram.error.TelegramError as e:
-            logger.error(f"Telegram API error: {e}")
-            sys.exit(1)
+            with open(LAST_SEEN_FILE, "w") as f:
+                json.dump({"last_published": timestamp.isoformat()}, f)
+        except Exception as e:
+            logger.error(f"Error saving last_seen.json: {e}")
 
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        sys.exit(1)
-    finally:
-        # Cleanup temporary directory
-        if temp_dir and os.path.exists(temp_dir):
-            retries = 3
-            for attempt in range(retries):
-                try:
-                    shutil.rmtree(temp_dir)
-                    logger.info(f"Cleaned up temporary directory: {temp_dir}")
-                    break
-                except PermissionError as e:
-                    if attempt < retries - 1:
-                        logger.error(f"Cleanup attempt {attempt + 1} failed. Retrying in 1 second...")
-                        time.sleep(1)
+    def get_new_videos(self):
+        """Fetch RSS feed and filter new videos."""
+        rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={YOUTUBE_CHANNEL_ID}"
+        logger.info(f"Checking feed: {rss_url}")
+        
+        feed = feedparser.parse(rss_url)
+        if feed.bozo:
+            logger.error(f"Error parsing feed: {feed.bozo_exception}")
+            return []
+
+        last_seen = self.load_last_seen()
+        new_videos = []
+
+        logger.info(f"Last seen timestamp: {last_seen}")
+
+        for entry in feed.entries:
+            # Entry published format: 2023-10-27T10:00:00+00:00
+            try:
+                published = datetime.fromisoformat(entry.published)
+            except ValueError:
+                # Fallback if format is different
+                published = datetime.strptime(entry.published, "%Y-%m-%dT%H:%M:%S%z")
+
+            if last_seen is None or published > last_seen:
+                new_videos.append({
+                    'id': entry.yt_videoid,
+                    'title': entry.title,
+                    'link': entry.link,
+                    'published': published,
+                    'author': entry.author
+                })
+
+        # Sort by published date (oldest first) so we process in order
+        new_videos.sort(key=lambda x: x['published'])
+        return new_videos
+
+    def clean_filename(self, title):
+        """Creates a safe filename from title."""
+        # Keep alphanumeric, spaces, hyphens, underscores
+        safe_chars = "".join(c for c in title if c.isalnum() or c in " -_")
+        return safe_chars.strip()
+
+    def spawn_download_terminal(self, video, dest_dir):
+        """
+        Spawns a new terminal window that:
+        1. Shows the yt-dlp command
+        2. Waits for user confirmation (Enter)
+        3. Waits for user to close/finish
+        4. Returns exit code
+        """
+        system = platform.system()
+        
+        # We enforce a clean filename to ensure we know where it lands
+        clean_name = self.clean_filename(video['title'])
+        # limited length
+        if len(clean_name) > 100:
+            clean_name = clean_name[:100]
+            
+        # Output template (relative)
+        output_template = f"{clean_name}.%(ext)s"
+        
+        # Expected final filename (after MP3 conversion)
+        expected_filename = f"{clean_name}.mp3"
+        expected_path = os.path.join(dest_dir, expected_filename)
+        
+        # Base yt-dlp command
+        yt_cmd = [
+            "yt-dlp",
+            "-x", # Audio only
+            "--audio-format", "mp3", 
+            "--audio-quality", "0",
+            "-o", output_template,
+            video['link']
+        ]
+        
+        import shlex
+        cmd_str = shlex.join(yt_cmd)
+        
+        logger.info(f"Preparing to download: {video['title']}")
+        
+        if system == "Linux":
+            venv_activation = ""
+            if os.environ.get("VIRTUAL_ENV"):
+                venv_path = os.environ.get("VIRTUAL_ENV")
+                activate_script = os.path.join(venv_path, "bin", "activate")
+                if os.path.exists(activate_script):
+                     venv_activation = f"source {shlex.quote(activate_script)}"
+
+            # Wrapper script
+            script_content = f"""#!/bin/bash
+{venv_activation}
+
+echo "=================================================="
+echo "Video: {video['title']}"
+echo "URL:   {video['link']}"
+echo "=================================================="
+echo ""
+echo "Command to run:"
+echo "{cmd_str}"
+echo ""
+
+echo "Starting download..."
+# Ensure we run from the destination directory (HOME)
+cd {shlex.quote(dest_dir)}
+
+{cmd_str}
+EXIT_CODE=$?
+
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "Download Success!"
+else
+    echo "Download Failed! Code: $EXIT_CODE"
+fi
+
+exit $EXIT_CODE
+"""
+            script_fd, script_path = tempfile.mkstemp(suffix=".sh", prefix="yt2tg_")
+            with os.fdopen(script_fd, 'w') as f:
+                f.write(script_content)
+            os.chmod(script_path, 0o755)
+
+            terminals = [
+                ('gnome-terminal', ['--wait', '--']), 
+                ('xfce4-terminal', ['--disable-server', '--wait', '-e']),
+                ('konsole', ['--nofork', '-e']), 
+                ('xterm', ['-e']),
+                ('terminator', ['-e']),
+                ('sway-terminal', ['-e'])
+            ]
+            
+            chosen_term = None
+            term_cmd = []
+
+            for term, args in terminals:
+                if shutil.which(term):
+                    if term == 'gnome-terminal':
+                        term_cmd = [term] + args + [script_path]
+                    elif term == 'xfce4-terminal':
+                         term_cmd = [term] + args + [script_path]
+                    elif term == 'xterm':
+                        term_cmd = [term] + args + [script_path]
+                    elif term == 'konsole':
+                        term_cmd = [term] + args + [f"/bin/bash {script_path}"]
                     else:
-                        logger.error(f"Failed to clean up temporary directory after {retries} attempts: {e}")
+                        term_cmd = [term] + args + [script_path]
+                    
+                    chosen_term = term
+                    break
+            
+            if not chosen_term:
+                logger.error("No supported terminal emulator found.")
+                print("No suitable terminal found to spawn. Running inline.")
+                input("Press Enter to run command inline...")
+                subprocess.run(["bash", script_path])
+                os.remove(script_path)
+                return expected_path 
+            
+            logger.info(f"Spawning terminal: {chosen_term}")
+            
+            try:
+                subprocess.run(term_cmd)
+            except Exception as e:
+                logger.error(f"Failed to run terminal: {e}")
+                os.remove(script_path)
+                return None
+
+            # Clean up script? Might wait a bit just in case? 
+            # Actually if subprocess returns, script is detached or done.
+            # We assume done if --wait worked.
+            
+            return expected_path
+
+        else:
+            logger.error(f"System {system} not fully implemented.")
+            return None
+
+    async def send_to_telegram(self, audio_path, video):
+        """Uploads the file to Telegram."""
+        try:
+            bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
+            caption = f"<strong>{video['title']}</strong>\n\n<b>Source:</b> {video['link']}"
+            
+            logger.info(f"Uploading {audio_path}...")
+            
+            with open(audio_path, 'rb') as f:
+                await bot.send_audio(
+                    chat_id=TELEGRAM_CHANNEL_ID,
+                    audio=f,
+                    caption=caption,
+                    title=video['title'][:64],
+                    performer=video.get('author', 'Unknown'),
+                    parse_mode=ParseMode.HTML,
+                    write_timeout=300,
+                    connect_timeout=60
+                )
+            logger.info("Upload Successful.")
+            return True
+        except Exception as e:
+            logger.error(f"Telegram upload failed: {e}")
+            return False
+
+    async def start(self):
+        new_videos = self.get_new_videos()
+        
+        if not new_videos:
+            logger.info("No new videos found.")
+            return
+
+        logger.info(f"Found {len(new_videos)} new videos.")
+        
+        # Destination: HOME directory
+        home_dir = os.path.expanduser("~")
+
+        for video in new_videos:
+            logger.info(f"Processing: {video['title']}")
+            
+            # Spawn download
+            expected_file = self.spawn_download_terminal(video, home_dir)
+
+            if not expected_file:
+                logger.error("Failed to initiate download.")
+                continue
+
+            # Wrapper script (non-interactive)
+            print(f">>> Processing video: {video['title']}")
+
+            
+            # Verify file exists
+            if os.path.exists(expected_file):
+                # Upload
+                success = await self.send_to_telegram(expected_file, video)
+                
+                if success:
+                    self.save_last_seen(video['published'])
+                
+                # Cleanup
+                try:
+                    os.remove(expected_file)
+                    logger.info(f"Removed local file: {expected_file}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove {expected_file}: {e}")
+            else:
+                logger.warning(f"Expected file not found: {expected_file}")
+                logger.warning("Perhaps the filename characters were replaced differently by yt-dlp?")
+                logger.warning("Check your Home directory manually.")
+            
+            time.sleep(1)
+
+def main():
+    monitor = FeedMonitor()
+    asyncio.run(monitor.start())
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

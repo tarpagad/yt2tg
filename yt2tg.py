@@ -216,7 +216,7 @@ exit $EXIT_CODE
                     elif term == 'xterm':
                         term_cmd = [term] + args + [script_path]
                     elif term == 'konsole':
-                        term_cmd = [term] + args + [f"/bin/bash {script_path}"]
+                        term_cmd = [term] + args + ["/bin/bash", script_path]
                     else:
                         term_cmd = [term] + args + [script_path]
                     

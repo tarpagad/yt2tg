@@ -25,6 +25,11 @@ from telegram.constants import ParseMode
 # --- Configuration ---
 load_dotenv()
 
+# Define paths before logging configuration
+DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
+LAST_SEEN_FILE = os.path.join(DATA_DIR, "last_seen.json")
+LOG_FILE = os.path.join(DATA_DIR, "yt2tg_monitor.log")
+
 # Configure logging
 os.makedirs(DATA_DIR, exist_ok=True)
 logging.basicConfig(
@@ -38,9 +43,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
-LAST_SEEN_FILE = os.path.join(DATA_DIR, "last_seen.json")
-LOG_FILE = os.path.join(DATA_DIR, "yt2tg_monitor.log")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 YOUTUBE_CHANNEL_ID = os.getenv("YOUTUBE_CHANNEL_ID")

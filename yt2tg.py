@@ -134,9 +134,9 @@ class FeedMonitor:
         expected_filename = f"{clean_name}.mp3"
         expected_path = os.path.join(dest_dir, expected_filename)
         
-        # Base yt-dlp command
+        # Base yt-dlp command (use python -m yt_dlp for container reliability)
         yt_cmd = [
-            "yt-dlp",
+            sys.executable, "-m", "yt_dlp",
             "-x", # Audio only
             "--audio-format", "mp3", 
             "--audio-quality", "0",

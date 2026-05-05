@@ -26,18 +26,21 @@ from telegram.constants import ParseMode
 load_dotenv()
 
 # Configure logging
+os.makedirs(DATA_DIR, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('yt2tg_monitor.log'),
+        logging.FileHandler(LOG_FILE),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
 # Constants
-LAST_SEEN_FILE = "last_seen.json"
+DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
+LAST_SEEN_FILE = os.path.join(DATA_DIR, "last_seen.json")
+LOG_FILE = os.path.join(DATA_DIR, "yt2tg_monitor.log")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 YOUTUBE_CHANNEL_ID = os.getenv("YOUTUBE_CHANNEL_ID")
@@ -211,14 +214,14 @@ class FeedMonitor:
 
         logger.info(f"Found {len(new_videos)} new videos.")
         
-        # Destination: HOME directory
-        home_dir = os.path.expanduser("~")
+        # Destination: DATA_DIR (persistent volume mounted at /data)
+        os.makedirs(DATA_DIR, exist_ok=True)
 
         for video in new_videos:
             logger.info(f"Processing: {video['title']}")
             
             # Spawn download
-            expected_file = self.spawn_download_terminal(video, home_dir)
+            expected_file = self.spawn_download_terminal(video, DATA_DIR)
 
             if not expected_file:
                 logger.error("Failed to initiate download.")

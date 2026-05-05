@@ -4,11 +4,7 @@
   },
   "deploy": {
     "restartPolicy": "on_failure",
-    "healthcheckPath": "/",
-    "healthcheckTimeout": 20,
-    "healthcheckInterval": 10,
-    "healthcheckTimeoutUnit": "SECONDS",
-    "healthcheckIntervalUnit": "SECONDS"
+    "startCommand": "python yt2tg.py"
   },
   "env": {
     "TELEGRAM_BOT_TOKEN": {
@@ -22,10 +18,10 @@
     "YOUTUBE_CHANNEL_ID": {
       "description": "YouTube Channel ID",
       "required": true
+    },
+    "DATA_DIR": {
+      "description": "Directory for persistent state and downloads (mount volume at this path)",
+      "value": "/data"
     }
-  },
-  "cron": {
-    "schedule": "0 9 * * *",
-    "command": "python yt2tg.py"
   }
 }

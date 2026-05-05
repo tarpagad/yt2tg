@@ -1,0 +1,1 @@
+worker: python yt2tg.py

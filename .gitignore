@@ -12,3 +12,4 @@ last_seen.json
 monitor.log
 build
 dist
+.railway/

@@ -118,14 +118,9 @@ class FeedMonitor:
 
     def spawn_download_terminal(self, video, dest_dir):
         """
-        Spawns a new terminal window that:
-        1. Shows the yt-dlp command
-        2. Waits for user confirmation (Enter)
-        3. Waits for user to close/finish
-        4. Returns exit code
+        Non-interactive download for Railway deployment.
+        Downloads audio using yt-dlp directly without terminal interaction.
         """
-        system = platform.system()
-        
         # We enforce a clean filename to ensure we know where it lands
         clean_name = self.clean_filename(video['title'])
         # limited length
@@ -149,106 +144,38 @@ class FeedMonitor:
             video['link']
         ]
         
-        import shlex
-        cmd_str = shlex.join(yt_cmd)
-        
         logger.info(f"Preparing to download: {video['title']}")
+        logger.info(f"Command: {' '.join(yt_cmd)}")
         
-        if system == "Linux":
-            venv_activation = ""
-            if os.environ.get("VIRTUAL_ENV"):
-                venv_path = os.environ.get("VIRTUAL_ENV")
-                activate_script = os.path.join(venv_path, "bin", "activate")
-                if os.path.exists(activate_script):
-                     venv_activation = f"source {shlex.quote(activate_script)}"
-
-            # Wrapper script
-            script_content = f"""#!/bin/bash
-{venv_activation}
-
-echo "=================================================="
-echo "Video: {video['title']}"
-echo "URL:   {video['link']}"
-echo "=================================================="
-echo ""
-echo "Command to run:"
-echo "{cmd_str}"
-echo ""
-
-echo "Starting download..."
-# Ensure we run from the destination directory (HOME)
-cd {shlex.quote(dest_dir)}
-
-{cmd_str}
-EXIT_CODE=$?
-
-if [ $EXIT_CODE -eq 0 ]; then
-    echo "Download Success!"
-else
-    echo "Download Failed! Code: $EXIT_CODE"
-fi
-
-exit $EXIT_CODE
-"""
-            script_fd, script_path = tempfile.mkstemp(suffix=".sh", prefix="yt2tg_")
-            with os.fdopen(script_fd, 'w') as f:
-                f.write(script_content)
-            os.chmod(script_path, 0o755)
-
-            terminals = [
-                ('gnome-terminal', ['--wait', '--']), 
-                ('xfce4-terminal', ['--disable-server', '--wait', '-e']),
-                ('konsole', ['--nofork', '-e']), 
-                ('xterm', ['-e']),
-                ('terminator', ['-e']),
-                ('sway-terminal', ['-e'])
-            ]
+        # Ensure we run from the destination directory
+        original_dir = os.getcwd()
+        try:
+            os.chdir(dest_dir)
             
-            chosen_term = None
-            term_cmd = []
-
-            for term, args in terminals:
-                if shutil.which(term):
-                    if term == 'gnome-terminal':
-                        term_cmd = [term] + args + [script_path]
-                    elif term == 'xfce4-terminal':
-                         term_cmd = [term] + args + [script_path]
-                    elif term == 'xterm':
-                        term_cmd = [term] + args + [script_path]
-                    elif term == 'konsole':
-                        term_cmd = [term] + args + ["/bin/bash", script_path]
-                    else:
-                        term_cmd = [term] + args + [script_path]
-                    
-                    chosen_term = term
-                    break
+            # Run yt-dlp directly
+            result = subprocess.run(
+                yt_cmd,
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout
+            )
             
-            if not chosen_term:
-                logger.error("No supported terminal emulator found.")
-                print("No suitable terminal found to spawn. Running inline.")
-                input("Press Enter to run command inline...")
-                subprocess.run(["bash", script_path])
-                os.remove(script_path)
-                return expected_path 
-            
-            logger.info(f"Spawning terminal: {chosen_term}")
-            
-            try:
-                subprocess.run(term_cmd)
-            except Exception as e:
-                logger.error(f"Failed to run terminal: {e}")
-                os.remove(script_path)
+            if result.returncode == 0:
+                logger.info("Download Success!")
+                return expected_path
+            else:
+                logger.error(f"Download Failed! Code: {result.returncode}")
+                logger.error(f"stderr: {result.stderr}")
                 return None
-
-            # Clean up script? Might wait a bit just in case? 
-            # Actually if subprocess returns, script is detached or done.
-            # We assume done if --wait worked.
-            
-            return expected_path
-
-        else:
-            logger.error(f"System {system} not fully implemented.")
+                
+        except subprocess.TimeoutExpired:
+            logger.error("Download timed out after 5 minutes")
             return None
+        except Exception as e:
+            logger.error(f"Failed to run download: {e}")
+            return None
+        finally:
+            os.chdir(original_dir)
 
     async def send_to_telegram(self, audio_path, video):
         """Uploads the file to Telegram."""

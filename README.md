@@ -86,3 +86,63 @@ You can compile the script into a standalone executable using `pyinstaller`. A s
 
 - **Terminal not opening**: Ensure you have a supported terminal emulator installed (gnome-terminal, xfce4-terminal, konsole, xterm).
 - **Download fails**: Check `yt2tg_monitor.log` or the brief output in the spawned terminal. Ensure `ffmpeg` is installed.
+
+---
+
+## Railway Deployment
+
+This project supports deployment to [Railway.app](https://railway.app) for fully automated, daily execution without manual intervention.
+
+### Branch
+
+The Railway-compatible version is on the `railway-deploy` branch. It removes all interactive terminal spawning and runs non-interactively.
+
+### Quick Setup
+
+1. **Deploy from GitHub**:
+   - Push the `railway-deploy` branch to your repository
+   - In Railway, create a new project and select "Deploy from GitHub"
+   - Choose the `railway-deploy` branch
+
+2. **Set Service Type to Cron**:
+   - Open your service → **Settings** → **Service Type** → Select **Cron**
+   - This enables the Cron Schedule setting
+
+3. **Configure Cron Schedule**:
+   - Go to **Settings** → **Cron Schedule**
+   - Set your desired schedule (e.g., `0 9 * * *` for daily at 9 AM UTC)
+   - Set **Command** to `python yt2tg.py`
+
+4. **Add Environment Variables** (in Railway Variables tab):
+   | Variable | Description |
+   |---|---|
+   | `TELEGRAM_BOT_TOKEN` | Your Telegram bot token |
+   | `TELEGRAM_CHANNEL_ID` | Your Telegram channel ID |
+   | `YOUTUBE_CHANNEL_ID` | The YouTube channel ID to monitor |
+   | `DATA_DIR` | Persistent storage path (default: `/data`) |
+
+5. **Attach Persistent Storage** (required):
+   - Go to **Storage** → **Add Volume**
+   - Mount the volume at `/data`
+   - This ensures `last_seen.json` persists between cron runs
+
+### How It Works on Railway
+
+- **Build**: Railpack detects Python from `requirements.txt` and installs `ffmpeg` as a system dependency via `railpack.json`
+- **Run**: The script runs once per cron trigger, checks for new videos, downloads them, uploads to Telegram, and exits
+- **State**: `last_seen.json` and logs are stored in `/data` (your persistent volume)
+- **Cleanup**: Downloaded MP3 files are deleted after successful upload to save space
+
+### Configuration Files
+
+| File | Purpose |
+|---|---|
+| `railway.json` | Railway service configuration (builder, env vars) |
+| `railpack.json` | Railpack config for system dependencies (ffmpeg) |
+| `Procfile` | Defines the start command |
+
+### Important Notes
+
+- The Railway version downloads and processes videos **automatically** without user confirmation
+- Without a persistent volume at `/data`, the `last_seen.json` file will be lost between runs, causing duplicate uploads
+- Logs are written to `/data/yt2tg_monitor.log` for debugging via Railway's log viewer
